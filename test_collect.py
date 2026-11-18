@@ -1,4 +1,4 @@
-from collect import parse_series, parse_regions, parse_region_dates, merge
+from collect import parse_series, parse_regions, parse_region_dates, merge, parse_gin
 
 js = ('chartData[0]={"Date":"23/11/1","VM":6935};'
       'listData[1]={"Date":"23/11/01","VM":6935,"VJ":8040,"VW":6543,"gVM":""};'
@@ -19,4 +19,9 @@ assert [x["sale"] for x in merge(old, new)] == [1, 3, 4]
 assert merge(old, []) == old
 html = 'var today = daily ? 20261118 : 0;\n<option value="0">비교날짜</option>\n<option value="20261117">2026년 11월 17일</option><option value="20261116">'
 assert parse_region_dates(html) == ("20261118", "20261117")
+gin = ('<script>var ssrGin0101Rows = [{"LAWD_CD":"1100000000","LAWD_NM":"서울","TRADE":5371,"yyyymm":"2026-11"},'
+       '{"LAWD_CD":"1168000000","LAWD_NM":"강남구","TRADE":9712,"yyyymm":"2026-11"}];\n</script>')
+assert parse_gin(gin) == [{"code": "11", "price": 5371, "yyyymm": "2026-11"},
+                          {"code": "11680", "price": 9712, "yyyymm": "2026-11"}]
+assert parse_gin("<html>no data</html>") == []
 print("ok")

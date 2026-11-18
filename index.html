@@ -119,7 +119,7 @@
 <script>
 const KINDS = [["sale", "매매"], ["jeonse", "전세"], ["wolse", "월세"]];
 const CLAMP = { 1: 2, 7: 5, 30: 10 };  // 색이 꽉 차는 증감률(%)
-let R = {}, allDates = [], latest = "", days = 7, sido = "11", region = "11", sort = { sido: null, sgg: "sale" }, chart;
+let R = {}, P = {}, allDates = [], latest = "", days = 7, sido = "11", region = "11", sort = { sido: null, sgg: "price" }, chart;
 
 const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 // test_dashboard.js 가 아래 함수를 검사한다
@@ -153,10 +153,12 @@ function cell(r, kind) {
 
 function table(el, rows, key, selected) {
   const s = sort[key];
-  if (s) rows.sort((a, b) => (rate(b, s, days) ?? -1e9) - (rate(a, s, days) ?? -1e9));
-  el.innerHTML = `<thead><tr><th data-k="">지역</th>${KINDS.map(([k, n]) =>
+  const val = r => (s === "price" ? P[r.code] : rate(r, s, days)) ?? -1e9;  // 값 없으면 맨 아래
+  if (s) rows.sort((a, b) => val(b) - val(a));
+  el.innerHTML = `<thead><tr><th data-k="">지역</th><th data-k="price" title="부동산지인 평당 매매 시세(만원/평)">평당가${
+      s === "price" ? " ▼" : ""}</th>${KINDS.map(([k, n]) =>
       `<th data-k="${k}">${n}${s === k ? " ▼" : ""}</th>`).join("")}</tr></thead><tbody>` +
-    rows.map(r => `<tr data-code="${esc(r.code)}" class="${r.code === selected ? "on" : ""}"><td>${shortName(r)}</td>${
+    rows.map(r => `<tr data-code="${esc(r.code)}" class="${r.code === selected ? "on" : ""}"><td>${shortName(r)}</td><td>${P[r.code] ? P[r.code].toLocaleString() : "–"}</td>${
       KINDS.map(([k]) => cell(r, k)).join("")}</tr>`).join("") + "</tbody>";
 }
 
@@ -253,7 +255,11 @@ for (const el of [lo, hi]) el.addEventListener("input", () => {
 });
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => R[region] && drawChart());
 
-fetch("data/listings.csv").then(r => { if (!r.ok) throw new Error(r.status); return r.text(); }).then(text => {
+// 평당가는 없어도 대시보드는 동작
+const prices = fetch("data/price.csv").then(r => r.ok ? r.text() : "").catch(() => "").then(text => {
+  for (const line of text.trim().split("\n").slice(1)) { const [code, price] = line.split(","); if (+price) P[code] = +price; }
+});
+Promise.all([fetch("data/listings.csv").then(r => { if (!r.ok) throw new Error(r.status); return r.text(); }), prices]).then(([text]) => {
   const lines = text.trim().split("\n");
   for (let i = 1; i < lines.length; i++) {
     const [date, code, name, level, sale, jeonse, wolse] = lines[i].split(",");
@@ -263,7 +269,7 @@ fetch("data/listings.csv").then(r => { if (!r.ok) throw new Error(r.status); ret
     if (date > latest) latest = date;
   }
   allDates = [...new Set(Object.values(R).flatMap(r => r.dates))].sort();
-  document.getElementById("asof").textContent = `기준일 ${latest} · 출처 아실(asil.kr) · 매일 오전 7시 갱신`;
+  document.getElementById("asof").textContent = `기준일 ${latest} · 매물 수: 아실(asil.kr) · 평당가: 부동산지인(aptgin.com, 만원/평) · 매일 오전 7시 갱신`;
   document.getElementById("tables").hidden = false;
   document.getElementById("chartSec").hidden = false;
   lo.max = hi.max = allDates.length - 1;

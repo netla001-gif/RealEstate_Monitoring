@@ -1,4 +1,5 @@
-"""아실(asil.kr) 시/도·구/군 매매·전세·월세 매물 수를 data/listings.csv 에 쌓는다."""
+"""아실(asil.kr) 시/도·구/군 매매·전세·월세 매물 수를 data/listings.csv 에 쌓고,
+부동산지인(aptgin.com) 지역별 평당 매매 시세를 data/price.csv 에 저장한다."""
 import csv
 import json
 import os
@@ -18,6 +19,9 @@ SERIES_URL = ("https://asil.kr/app/data/data_offer_sum.jsp?apt=&area={code}&c_ap
               "&deal=1&mode=2&sSize=&eSize=&sY={sy}&sM={sm}&eY={ey}&eM={em}")
 HEADERS = {"User-Agent": "Mozilla/5.0", "Referer": "https://asil.kr/app/offer_sum_chart.jsp"}
 LIST_RE = re.compile(r"listData\[\d+\]=(\{.*?\});")
+PRICE_PATH = os.path.join(os.path.dirname(CSV_PATH), "price.csv")
+GIN_HOME = "https://aptgin.com/home/gin01/gin0101"
+GIN_ROWS_RE = re.compile(r"var ssrGin0101Rows = (\[.*?\]);\n")
 
 
 def _int(v):
@@ -45,20 +49,52 @@ def parse_region_dates(html):
     return today, cmp
 
 
+def parse_gin(html):
+    """부동산지인 지역분석 페이지의 서버 데이터 → 지역별 평당 매매 시세(만원/평).
+    첫 행은 시/도(코드 앞 2자리), 나머지는 구/군(코드 앞 5자리, 아실 코드와 같음)."""
+    m = GIN_ROWS_RE.search(html)
+    rows = json.loads(m.group(1)) if m else []
+    return [{"code": r["LAWD_CD"][:2] if i == 0 else r["LAWD_CD"][:5], "price": _int(r.get("TRADE")),
+             "yyyymm": r.get("yyyymm", "")} for i, r in enumerate(rows)]
+
+
+def collect_prices():
+    """평당가는 현재값 스냅샷만 필요하므로 매번 통째로 다시 쓴다. 실패해도 매물 수집은 계속."""
+    headers = {"User-Agent": "Mozilla/5.0"}
+    try:
+        sidos = sorted(set(re.findall(r"gin0101/loc/(\d{10})\"", fetch(GIN_HOME, headers))))
+        rows = []
+        for c in sidos:
+            rows += parse_gin(fetch(f"{GIN_HOME}/loc/{c}", headers))
+    except Exception as e:
+        print(f"경고: 부동산지인 평당가 수집 실패: {e}", file=sys.stderr)
+        return
+    if not rows:
+        print("경고: 부동산지인 평당가가 비어 있어 기존 파일 유지", file=sys.stderr)
+        return
+    os.makedirs(os.path.dirname(PRICE_PATH), exist_ok=True)
+    with open(PRICE_PATH, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, ["code", "price", "yyyymm"])
+        w.writeheader()
+        w.writerows(rows)
+    print(f"평당가 {len(rows)}개 지역 ({rows[0]['yyyymm']})")
+
+
 def merge(old, new):
     rows = {(r["code"], r["date"]): r for r in old}
     rows.update({(r["code"], r["date"]): r for r in new})
     return [rows[k] for k in sorted(rows)]
 
 
-def fetch(url):
-    time.sleep(1)  # 아실 부하/차단 방지
-    req = urllib.request.Request(url, headers=HEADERS)
+def fetch(url, headers=HEADERS):
+    time.sleep(1)  # 상대 사이트 부하/차단 방지
+    req = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(req, timeout=60) as r:
         return r.read().decode("utf-8", "replace")
 
 
 def main():
+    collect_prices()
     now = datetime.now(timezone(timedelta(hours=9)))  # 아실은 KST 기준
     old = []
     if os.path.exists(CSV_PATH):
