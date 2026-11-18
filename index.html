@@ -52,7 +52,19 @@
   #msg { color: var(--ink2); padding: 40px 0; text-align: center; }
   #msg:empty { display: none; }
   .ctl { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin-top: 10px; color: var(--ink2); font-size: 13px; }
-  .ctl input { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--axis); border-radius: 6px; padding: 4px 6px; }
+  .range2 { position: relative; flex: 1 1 260px; min-width: 200px; height: 32px; }
+  .range2 .track { position: absolute; left: 11px; right: 11px; top: 14px; height: 4px; border-radius: 2px; background: var(--grid); }
+  .range2 .fill { position: absolute; top: 0; height: 100%; border-radius: 2px; background: var(--ink2); }
+  .range2 input { position: absolute; inset: 0; width: 100%; height: 32px; margin: 0; background: none;
+    -webkit-appearance: none; appearance: none; pointer-events: none; }
+  .range2 input::-webkit-slider-runnable-track { background: none; }
+  .range2 input::-moz-range-track { background: none; }
+  .range2 input::-webkit-slider-thumb { -webkit-appearance: none; pointer-events: auto; width: 22px; height: 22px;
+    border-radius: 50%; background: var(--surface); border: 2px solid var(--ink); cursor: grab; }
+  .range2 input::-moz-range-thumb { pointer-events: auto; width: 18px; height: 18px;
+    border-radius: 50%; background: var(--surface); border: 2px solid var(--ink); cursor: grab; }
+  .range2 input:focus-visible::-webkit-slider-thumb { outline: 2px solid var(--s1); outline-offset: 2px; }
+  #spanText { font-variant-numeric: tabular-nums; white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -93,8 +105,12 @@
         <button data-months="12" aria-pressed="false">1년</button>
         <button data-months="0" aria-pressed="true">전체</button>
       </div>
-      <label>시작 <input type="date" id="from"></label>
-      <label>끝 <input type="date" id="to"></label>
+      <div class="range2">
+        <div class="track"><div class="fill" id="fill"></div></div>
+        <input type="range" id="lo" min="0" max="0" value="0" aria-label="그래프 시작일">
+        <input type="range" id="hi" min="0" max="0" value="0" aria-label="그래프 끝일">
+      </div>
+      <span id="spanText"></span>
     </div>
     <div class="chartbox"><canvas id="chart" aria-label="매물 수 추이 차트"></canvas></div>
   </section>
@@ -155,17 +171,22 @@ function render() {
   drawChart();
 }
 
-function drawChart() {
-  const r = R[region];
-  document.getElementById("chartTitle").textContent = r.name;
+const lo = document.getElementById("lo"), hi = document.getElementById("hi");
+
+function chartData() {
+  const r = R[region], from = allDates[lo.value], to = allDates[hi.value];
+  const i0 = r.dates.findIndex(d => d >= from), i1 = r.dates.findLastIndex(d => d <= to) + 1;
   const colors = [css("--s1"), css("--s2"), css("--s3")];
-  const from = document.getElementById("from").value, to = document.getElementById("to").value;
-  const i0 = r.dates.findIndex(d => !from || d >= from), i1 = r.dates.findLastIndex(d => !to || d <= to) + 1;
-  const data = {
+  return {
     labels: r.dates.slice(i0, i1),
     datasets: KINDS.map(([k, n], i) => ({ label: n, data: r[k].slice(i0, i1), borderColor: colors[i], backgroundColor: colors[i],
       borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, tension: 0 })),
   };
+}
+
+function drawChart() {
+  document.getElementById("chartTitle").textContent = R[region].name;
+  const data = chartData();
   if (chart) chart.destroy();
   chart = new Chart(document.getElementById("chart"), {
     type: "line", data,
@@ -201,11 +222,19 @@ document.getElementById("tables").addEventListener("click", e => {
   region = code;
   render();
 });
+// 슬라이더 위치 → 채움 막대·날짜 표시 갱신
+function syncSlider() {
+  const max = allDates.length - 1, a = lo.value / max * 100, b = hi.value / max * 100;
+  const fill = document.getElementById("fill");
+  fill.style.left = a + "%"; fill.style.width = (b - a) + "%";
+  document.getElementById("spanText").textContent = `${allDates[lo.value]} ~ ${allDates[hi.value]}`;
+}
 function setSpan(months) {
-  const from = document.getElementById("from"), to = document.getElementById("to");
-  to.value = latest;
-  if (months) { const d = new Date(latest); d.setMonth(d.getMonth() - months); from.value = d.toISOString().slice(0, 10); }
-  else from.value = allDates[0];
+  hi.value = allDates.length - 1;
+  let from = allDates[0];
+  if (months) { const d = new Date(latest); d.setMonth(d.getMonth() - months); from = d.toISOString().slice(0, 10); }
+  lo.value = Math.max(0, allDates.findIndex(d => d >= from));
+  syncSlider();
   document.querySelectorAll("#span button").forEach(x => x.setAttribute("aria-pressed", +x.dataset.months === months));
 }
 document.getElementById("span").addEventListener("click", e => {
@@ -213,9 +242,14 @@ document.getElementById("span").addEventListener("click", e => {
   setSpan(+b.dataset.months);
   drawChart();
 });
-for (const id of ["from", "to"]) document.getElementById(id).addEventListener("change", () => {
+for (const el of [lo, hi]) el.addEventListener("input", () => {
+  if (+lo.value > +hi.value) (el === lo ? lo : hi).value = (el === lo ? hi : lo).value;  // 손잡이가 서로 넘지 않게
+  // 두 손잡이가 끝에 겹치면 위에 있는 것을 움직일 수 있게
+  lo.style.zIndex = +lo.value >= allDates.length - 1 ? 2 : "";
+  syncSlider();
   document.querySelectorAll("#span button").forEach(x => x.setAttribute("aria-pressed", "false"));
-  drawChart();
+  chart.data = chartData();
+  chart.update("none");
 });
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => R[region] && drawChart());
 
@@ -232,7 +266,7 @@ fetch("data/listings.csv").then(r => { if (!r.ok) throw new Error(r.status); ret
   document.getElementById("asof").textContent = `기준일 ${latest} · 출처 아실(asil.kr) · 매일 오전 7시 갱신`;
   document.getElementById("tables").hidden = false;
   document.getElementById("chartSec").hidden = false;
-  for (const id of ["from", "to"]) Object.assign(document.getElementById(id), { min: allDates[0], max: latest });
+  lo.max = hi.max = allDates.length - 1;
   setSpan(0);
   render();
 }).catch(e => { document.getElementById("msg").textContent = `데이터를 불러오지 못했습니다 (${e.message})`; });
