@@ -1,0 +1,25 @@
+name: collect
+on:
+  schedule:
+    - cron: '0 22 * * *'  # 매일 KST 07:00
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency: collect
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python test_collect.py
+      - run: python collect.py
+      - run: |
+          git add data
+          git diff --cached --quiet && exit 0
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit -m "data: $(TZ=Asia/Seoul date +%F) 매물 수집"
+          git push
