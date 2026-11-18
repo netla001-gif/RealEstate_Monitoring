@@ -1,0 +1,20 @@
+from collect import parse_series, parse_regions, parse_region_dates, merge
+
+js = ('chartData[0]={"Date":"23/11/1","VM":6935};'
+      'listData[1]={"Date":"23/11/01","VM":6935,"VJ":8040,"VW":6543,"gVM":""};'
+      'listData[0]={"Date":"26/11/18","VM":12288,"VJ":4437,"VW":4660};')
+assert parse_series(js) == [
+    {"date": "2023-11-01", "sale": 6935, "jeonse": 8040, "wolse": 6543},
+    {"date": "2026-11-18", "sale": 12288, "jeonse": 4437, "wolse": 4660}]
+assert parse_series("chartData.length = 0;") == []
+
+r = parse_regions('[{"idx":"1","area":"11680","areaname":"서울 강남구","total":"12,288","value":"12,293","rate":"-0.1"}]', "sigungu")
+assert r == [{"code": "11680", "name": "서울 강남구", "level": "sigungu"}]
+
+old = [{"date": "2026-11-17", "code": "11", "sale": 1}, {"date": "2026-11-18", "code": "11", "sale": 2}]
+new = [{"date": "2026-11-18", "code": "11", "sale": 3}, {"date": "2026-11-19", "code": "11", "sale": 4}]
+assert [x["sale"] for x in merge(old, new)] == [1, 3, 4]
+assert merge(old, []) == old
+html = 'var today = daily ? 20261118 : 0;\n<option value="0">비교날짜</option>\n<option value="20261117">2026년 11월 17일</option><option value="20261116">'
+assert parse_region_dates(html) == ("20261118", "20261117")
+print("ok")
