@@ -1,4 +1,4 @@
-from collect import parse_series, parse_regions, parse_region_dates, merge, parse_gin
+from collect import parse_series, parse_regions, parse_region_dates, merge, parse_gin, parse_volume
 
 js = ('chartData[0]={"Date":"23/11/1","VM":6935};'
       'listData[1]={"Date":"23/11/01","VM":6935,"VJ":8040,"VW":6543,"gVM":""};'
@@ -24,4 +24,11 @@ gin = ('<script>var ssrGin0101Rows = [{"LAWD_CD":"1100000000","LAWD_NM":"서울"
 assert parse_gin(gin) == [{"code": "11", "price": 5371, "yyyymm": "2026-11"},
                           {"code": "11680", "price": 9712, "yyyymm": "2026-11"}]
 assert parse_gin("<html>no data</html>") == []
+vol = ('chartData1.length = 0;\n\tchartData1[0] = {"date":"2024/1","M":225348,"J":84329,"W":188,"M_CNT":199,"J_CNT":1422,"W_CNT":1002};\n'
+       '\tchartData1[1] = {"date":"2006/12","M_CNT":695,"J_CNT":0};\n')
+assert parse_volume(vol) == [{"month": "2006-12", "sale": 695, "jeonse": 0, "wolse": 0},
+                             {"month": "2024-01", "sale": 199, "jeonse": 1422, "wolse": 1002}]
+assert parse_volume("chartData1.length = 0;") == []
+old = [{"month": "2026-10", "code": "11", "sale": 1}]
+assert [x["sale"] for x in merge(old, [{"month": "2026-10", "code": "11", "sale": 2}], key="month")] == [2]
 print("ok")

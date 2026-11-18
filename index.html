@@ -31,6 +31,7 @@
   .sub { color: var(--ink2); font-size: 13px; }
   .seg { display: inline-flex; border: 1px solid var(--axis); border-radius: 8px; overflow: hidden; }
   .seg button { border: 0; background: var(--surface); color: var(--ink2); padding: 6px 14px; font: inherit; cursor: pointer; }
+  .seg[hidden] { display: none; }
   .seg button[aria-pressed="true"] { background: var(--ink); color: var(--page); }
   .grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
   @media (max-width: 760px) { .grid { grid-template-columns: minmax(0, 1fr); } }
@@ -75,6 +76,10 @@
       <div class="sub" id="asof">데이터 불러오는 중…</div>
     </div>
     <div style="text-align:right">
+      <div class="seg" id="metric" role="group" aria-label="지표" style="margin-right:8px">
+        <button data-metric="listing" aria-pressed="true">매물 증감</button>
+        <button data-metric="volume" aria-pressed="false">거래량</button>
+      </div>
       <div class="seg" id="period" role="group" aria-label="비교 기간">
         <button data-days="1" aria-pressed="false">일</button>
         <button data-days="7" aria-pressed="true">주</button>
@@ -113,12 +118,16 @@
       <span id="spanText"></span>
     </div>
     <div class="chartbox"><canvas id="chart" aria-label="매물 수 추이 차트"></canvas></div>
+    <h2 style="margin-top:20px">월별 거래량 (건)</h2>
+    <div class="sub">실거래 신고 기준 · 신고 기한이 계약 후 30일이라 최근 달은 아직 집계 중(흐리게 표시)</div>
+    <div class="chartbox"><canvas id="vchart" aria-label="월별 거래량 차트"></canvas></div>
   </section>
 </main>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script>
 const KINDS = [["sale", "매매"], ["jeonse", "전세"], ["wolse", "월세"]];
 const CLAMP = { 1: 2, 7: 5, 30: 10 };  // 색이 꽉 차는 증감률(%)
+let metric = "listing", V = {}, volMonth = "", volumeMonths = [], vchart;
 let R = {}, P = {}, allDates = [], latest = "", days = 7, sido = "11", region = "11", sort = { sido: null, sgg: "price" }, chart;
 
 const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
@@ -138,22 +147,44 @@ function rate(r, kind, n) {
   if (i < 0 || !r[kind][i]) return null;
   return (r[kind][last] / r[kind][i] - 1) * 100;
 }
+
+// 신고 기한(계약 후 30일)이 지나 집계가 끝난 달인가: 그 달 말일 + 30일 < today
+const settled = (month, today) => {
+  const [y, m] = month.split("-").map(Number);
+  return new Date(Date.UTC(y, m, 0) + 30 * 864e5).toISOString().slice(0, 10) < today;
+};
+
+// month 거래량 / 직전 12개월 평균 - 1. 계산 불가면 null
+function volRate(v, kind, month) {
+  const i = v ? v.months.indexOf(month) : -1;
+  if (i < 12) return null;
+  const avg = v[kind].slice(i - 12, i).reduce((a, b) => a + b, 0) / 12;
+  return avg ? (v[kind][i] / avg - 1) * 100 : null;
+}
 // </pure>
+const metricVal = (r, kind) => metric === "volume" ? volRate(V[r.code], kind, volMonth) : rate(r, kind, days);
 
 function cell(r, kind) {
-  const v = rate(r, kind, days), c = CLAMP[days];
+  const v = metricVal(r, kind), c = metric === "volume" ? 50 : CLAMP[days];
   if (v === null) return `<td class="cell" title="데이터 없음">–</td>`;
   const pct = Math.min(Math.abs(v) / c, 1) * 100;
   const bg = `color-mix(in oklab, var(${v >= 0 ? "--up" : "--down"}) ${pct.toFixed(0)}%, var(--mid))`;
   const ink = pct > 60 ? "#ffffff" : "var(--ink)";
-  const base = r[kind][r.dates.findLastIndex(d => d <= shiftDate(latest, days))];
-  const tip = `${shortName(r)} ${KINDS.find(k => k[0] === kind)[1]}: ${base.toLocaleString()} → ${r[kind].at(-1).toLocaleString()}건`;
+  const label = `${shortName(r)} ${KINDS.find(k => k[0] === kind)[1]}`;
+  let tip;
+  if (metric === "volume") {
+    const x = V[r.code], i = x.months.indexOf(volMonth);
+    tip = `${label}: 12개월 평균 ${Math.round(x[kind].slice(i - 12, i).reduce((a, b) => a + b, 0) / 12).toLocaleString()} → ${volMonth} ${x[kind][i].toLocaleString()}건`;
+  } else {
+    const base = r[kind][r.dates.findLastIndex(d => d <= shiftDate(latest, days))];
+    tip = `${label}: ${base.toLocaleString()} → ${r[kind].at(-1).toLocaleString()}건`;
+  }
   return `<td class="cell" style="background:${bg};color:${ink}" title="${tip}">${Math.abs(v) < 0.05 ? "0.0" : (v > 0 ? "+" : "") + v.toFixed(1)}%</td>`;
 }
 
 function table(el, rows, key, selected) {
   const s = sort[key];
-  const val = r => (s === "price" ? P[r.code] : rate(r, s, days)) ?? -1e9;  // 값 없으면 맨 아래
+  const val = r => (s === "price" ? P[r.code] : metricVal(r, s)) ?? -1e9;  // 값 없으면 맨 아래
   if (s) rows.sort((a, b) => val(b) - val(a));
   el.innerHTML = `<thead><tr><th data-k="">지역</th><th data-k="price" title="부동산지인 평당 매매 시세(만원/평)">평당가${
       s === "price" ? " ▼" : ""}</th>${KINDS.map(([k, n]) =>
@@ -167,9 +198,12 @@ function render() {
   table(document.getElementById("sido"), all.filter(r => r.level === "sido"), "sido", sido);
   table(document.getElementById("sgg"), all.filter(r => r.level === "sigungu" && r.code.startsWith(sido)), "sgg", region);
   document.getElementById("sggTitle").textContent = `${R[sido].name} 구/군 (열 제목 클릭 시 정렬)`;
-  document.getElementById("scale").textContent = `색 최대 ±${CLAMP[days]}%`;
+  document.getElementById("period").hidden = metric === "volume";
+  document.getElementById("scale").textContent = `색 최대 ±${metric === "volume" ? 50 : CLAMP[days]}%`;
   const target = shiftDate(latest, days), base = allDates.findLast(d => d <= target);
-  document.getElementById("range").textContent = base ? `${base} → ${latest} 매물 수 비교` : "";
+  document.getElementById("range").textContent = metric === "volume"
+    ? `${volMonth} 거래량 vs 직전 12개월 평균 (신고 기한이 지나 집계가 끝난 마지막 달 기준)`
+    : base ? `${base} → ${latest} 매물 수 비교` : "";
   drawChart();
 }
 
@@ -183,6 +217,19 @@ function chartData() {
     labels: r.dates.slice(i0, i1),
     datasets: KINDS.map(([k, n], i) => ({ label: n, data: r[k].slice(i0, i1), borderColor: colors[i], backgroundColor: colors[i],
       borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, tension: 0 })),
+  };
+}
+
+function volData() {
+  const v = V[region], from = allDates[lo.value].slice(0, 7), to = allDates[hi.value].slice(0, 7);
+  if (!v) return { labels: [], datasets: [] };
+  const i0 = v.months.findIndex(m => m >= from), i1 = v.months.findLastIndex(m => m <= to) + 1;
+  const colors = [css("--s1"), css("--s2"), css("--s3")], months = v.months.slice(i0, i1);
+
+  return {
+    labels: months,
+    datasets: KINDS.map(([k, n], i) => ({ label: n, data: v[k].slice(i0, i1), borderRadius: 2,
+      backgroundColor: months.map(m => settled(m, latest) ? colors[i] : colors[i] + "55") })),  // 집계 중인 달은 흐리게
   };
 }
 
@@ -207,8 +254,33 @@ function drawChart() {
       },
     },
   });
+  if (vchart) vchart.destroy();
+  vchart = new Chart(document.getElementById("vchart"), {
+    type: "bar", data: volData(),
+    options: {
+      maintainAspectRatio: false, animation: false,
+      interaction: { mode: "index", intersect: false },
+      datasets: { bar: { categoryPercentage: 0.8, barPercentage: 0.9 } },
+      plugins: {
+        legend: { labels: { color: css("--ink2"), boxWidth: 12, boxHeight: 12 } },
+        tooltip: { callbacks: { label: c => ` ${c.dataset.label} ${c.parsed.y.toLocaleString()}건` } },
+      },
+      scales: {
+        x: { ticks: { color: css("--muted"), maxTicksLimit: innerWidth < 600 ? 4 : 12, maxRotation: 0, autoSkipPadding: 12 },
+             grid: { display: false }, border: { color: css("--axis") } },
+        y: { ticks: { color: css("--muted"), callback: v => v.toLocaleString() }, grid: { color: css("--grid") },
+             border: { display: false } },
+      },
+    },
+  });
 }
 
+document.getElementById("metric").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  metric = b.dataset.metric;
+  document.querySelectorAll("#metric button").forEach(x => x.setAttribute("aria-pressed", x === b));
+  render();
+});
 document.getElementById("period").addEventListener("click", e => {
   const b = e.target.closest("button"); if (!b) return;
   days = +b.dataset.days;
@@ -252,6 +324,8 @@ for (const el of [lo, hi]) el.addEventListener("input", () => {
   document.querySelectorAll("#span button").forEach(x => x.setAttribute("aria-pressed", "false"));
   chart.data = chartData();
   chart.update("none");
+  vchart.data = volData();
+  vchart.update("none");
 });
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => R[region] && drawChart());
 
@@ -259,7 +333,18 @@ matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => R[re
 const prices = fetch("data/price.csv").then(r => r.ok ? r.text() : "").catch(() => "").then(text => {
   for (const line of text.trim().split("\n").slice(1)) { const [code, price] = line.split(","); if (+price) P[code] = +price; }
 });
-Promise.all([fetch("data/listings.csv").then(r => { if (!r.ok) throw new Error(r.status); return r.text(); }), prices]).then(([text]) => {
+// 거래량도 없으면 해당 칸이 "–"
+const volumes = fetch("data/volume.csv").then(r => r.ok ? r.text() : "").catch(() => "").then(text => {
+  for (const line of text.trim().split("\n").slice(1)) {
+    const [month, code, sale, jeonse, wolse] = line.split(",");
+    if (!code) continue;
+    const v = V[code] ??= { months: [], sale: [], jeonse: [], wolse: [] };
+    v.months.push(month); v.sale.push(+sale); v.jeonse.push(+jeonse); v.wolse.push(+wolse);
+  }
+  const months = [...new Set(Object.values(V).flatMap(v => v.months))].sort();
+  volumeMonths = months;
+});
+Promise.all([fetch("data/listings.csv").then(r => { if (!r.ok) throw new Error(r.status); return r.text(); }), prices, volumes]).then(([text]) => {
   const lines = text.trim().split("\n");
   for (let i = 1; i < lines.length; i++) {
     const [date, code, name, level, sale, jeonse, wolse] = lines[i].split(",");
@@ -269,7 +354,8 @@ Promise.all([fetch("data/listings.csv").then(r => { if (!r.ok) throw new Error(r
     if (date > latest) latest = date;
   }
   allDates = [...new Set(Object.values(R).flatMap(r => r.dates))].sort();
-  document.getElementById("asof").textContent = `기준일 ${latest} · 매물 수: 아실(asil.kr) · 평당가: 부동산지인(aptgin.com, 만원/평) · 매일 오전 7시 갱신`;
+  volMonth = volumeMonths.findLast(m => settled(m, latest)) ?? "";
+  document.getElementById("asof").textContent = `기준일 ${latest} · 매물 수·거래량: 아실(asil.kr) · 평당가: 부동산지인(aptgin.com, 만원/평) · 매일 오전 7시 갱신`;
   document.getElementById("tables").hidden = false;
   document.getElementById("chartSec").hidden = false;
   lo.max = hi.max = allDates.length - 1;

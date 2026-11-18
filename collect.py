@@ -1,4 +1,4 @@
-"""아실(asil.kr) 시/도·구/군 매매·전세·월세 매물 수를 data/listings.csv 에 쌓고,
+"""아실(asil.kr) 시/도·구/군 매매·전세·월세 매물 수를 data/listings.csv, 월별 거래량을 data/volume.csv 에 쌓고,
 부동산지인(aptgin.com) 지역별 평당 매매 시세를 data/price.csv 에 저장한다."""
 import csv
 import json
@@ -19,6 +19,13 @@ SERIES_URL = ("https://asil.kr/app/data/data_offer_sum.jsp?apt=&area={code}&c_ap
               "&deal=1&mode=2&sSize=&eSize=&sY={sy}&sM={sm}&eY={ey}&eM={em}")
 HEADERS = {"User-Agent": "Mozilla/5.0", "Referer": "https://asil.kr/app/offer_sum_chart.jsp"}
 LIST_RE = re.compile(r"listData\[\d+\]=(\{.*?\});")
+VOLUME_PATH = os.path.join(os.path.dirname(CSV_PATH), "volume.csv")
+VOLUME_FIELDS = ["month", "code", "sale", "jeonse", "wolse"]
+VOLUME_START = (2021, 1)
+VOLUME_URL = ("https://asil.kr/rts_m/chart/data_price_js.jsp?ch=1&area={code}&apt=&m2=&deal=123&price=avg&mode=count"
+              "&sY={sy}&sM={sm}&eY={ey}&eM={em}")
+VOLUME_HEADERS = {"User-Agent": "Mozilla/5.0", "Referer": "https://asil.kr/app/analysis_area_chart.jsp"}  # Referer 없으면 빈 응답
+VOLUME_RE = re.compile(r"chartData1\[\d+\] = (\{.*?\});")
 PRICE_PATH = os.path.join(os.path.dirname(CSV_PATH), "price.csv")
 GIN_HOME = "https://aptgin.com/home/gin01/gin0101"
 GIN_ROWS_RE = re.compile(r"var ssrGin0101Rows = (\[.*?\]);\n")
@@ -80,10 +87,38 @@ def collect_prices():
     print(f"평당가 {len(rows)}개 지역 ({rows[0]['yyyymm']})")
 
 
-def merge(old, new):
-    rows = {(r["code"], r["date"]): r for r in old}
-    rows.update({(r["code"], r["date"]): r for r in new})
+def parse_volume(js):
+    """아실 거래량 차트 응답 → 월별 매매·전세·월세 실거래 건수."""
+    rows = []
+    for m in VOLUME_RE.finditer(js):
+        d = json.loads(m.group(1))
+        y, mo = d["date"].split("/")
+        rows.append({"month": f"{y}-{int(mo):02d}", "sale": _int(d.get("M_CNT")),
+                     "jeonse": _int(d.get("J_CNT")), "wolse": _int(d.get("W_CNT"))})
+    return sorted(rows, key=lambda r: r["month"])
+
+
+def merge(old, new, key="date"):
+    rows = {(r["code"], r[key]): r for r in old}
+    rows.update({(r["code"], r[key]): r for r in new})
     return [rows[k] for k in sorted(rows)]
+
+
+def read_csv(path):
+    if not os.path.exists(path):
+        return []
+    with open(path, newline="", encoding="utf-8") as f:
+        return list(csv.DictReader(f))
+
+
+def write_csv(path, fields, rows):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fields, extrasaction="ignore")
+        w.writeheader()
+        w.writerows(rows)
+    os.replace(tmp, path)
 
 
 def fetch(url, headers=HEADERS):
@@ -96,12 +131,11 @@ def fetch(url, headers=HEADERS):
 def main():
     collect_prices()
     now = datetime.now(timezone(timedelta(hours=9)))  # 아실은 KST 기준
-    old = []
-    if os.path.exists(CSV_PATH):
-        with open(CSV_PATH, newline="", encoding="utf-8") as f:
-            old = list(csv.DictReader(f))
+    old, old_vol = read_csv(CSV_PATH), read_csv(VOLUME_PATH)
     prev = now.replace(day=1) - timedelta(days=1)
+    prev2 = prev.replace(day=1) - timedelta(days=1)  # 거래량은 신고 지연(30일) 때문에 최근 3개월을 다시 받는다
     have = {r["code"] for r in old}  # 이력이 없는 지역(최초·신규·이전 실패)은 처음부터 받는다
+    have_vol = {r["code"] for r in old_vol}
 
     today, cmp = parse_region_dates(fetch(REGION_PAGE))
     regions = parse_regions(fetch(REGION_URL.format(mode=0, area="", today=today, cmp=cmp)), "sido")
@@ -111,7 +145,7 @@ def main():
         except Exception as e:
             print(f"경고: {sido['name']} 구/군 목록 실패: {e}", file=sys.stderr)
 
-    new, failed = [], 0
+    new, new_vol, failed, failed_vol = [], [], 0, 0
     for i, reg in enumerate(regions, 1):
         sy, sm = (prev.year, prev.month) if reg["code"] in have else START
         try:
@@ -123,6 +157,15 @@ def main():
             failed += 1
             continue
         new += [{**s, **reg} for s in series]
+        vy, vm = (prev2.year, prev2.month) if reg["code"] in have_vol else VOLUME_START
+        try:
+            vol = parse_volume(fetch(VOLUME_URL.format(code=reg["code"], sy=vy, sm=vm, ey=now.year, em=now.month),
+                                     VOLUME_HEADERS))
+        except Exception as e:
+            vol = []
+            print(f"경고: {reg['name']}({reg['code']}) 거래량 실패: {e}", file=sys.stderr)
+        failed_vol += not vol
+        new_vol += [{**v, "code": reg["code"]} for v in vol]
         if i % 50 == 0:
             print(f"{i}/{len(regions)}")
 
@@ -131,16 +174,15 @@ def main():
     if not new:
         sys.exit("수집된 데이터가 없습니다 (차단 의심). CSV를 건드리지 않습니다.")
     rows = merge(old, new)
-    os.makedirs(os.path.dirname(CSV_PATH), exist_ok=True)
-    tmp = CSV_PATH + ".tmp"
-    with open(tmp, "w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, FIELDS, extrasaction="ignore")
-        w.writeheader()
-        w.writerows(rows)
-    os.replace(tmp, CSV_PATH)
-    print(f"지역 {len(regions)}개 (실패 {failed}), 새 행 {len(new)}, 전체 {len(rows)}행")
-    if failed > len(regions) // 2:  # 받은 건 저장하되, 절반 넘게 실패하면 실행을 실패로 표시
-        sys.exit(f"지역 절반 이상 수집 실패 ({failed}/{len(regions)}), 차단 의심")
+    write_csv(CSV_PATH, FIELDS, rows)
+    print(f"매물: 지역 {len(regions)}개 (실패 {failed}), 새 행 {len(new)}, 전체 {len(rows)}행")
+    if new_vol:
+        vol_rows = merge(old_vol, new_vol, key="month")
+        write_csv(VOLUME_PATH, VOLUME_FIELDS, vol_rows)
+        print(f"거래량: 실패 {failed_vol}, 새 행 {len(new_vol)}, 전체 {len(vol_rows)}행")
+    worst = max(failed, failed_vol)
+    if worst > len(regions) // 2:  # 받은 건 저장하되, 절반 넘게 실패하면 실행을 실패로 표시
+        sys.exit(f"지역 절반 이상 수집 실패 (매물 {failed}, 거래량 {failed_vol} / {len(regions)}), 차단 의심")
 
 
 if __name__ == "__main__":
