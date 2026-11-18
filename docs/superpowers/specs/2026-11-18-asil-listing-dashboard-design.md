@@ -21,8 +21,11 @@
 - 요청 간 1초 대기, 약 270회/일.
 
 ## 구성
-- `collect.py` — 전 지역 시계열을 받아 `data/listings.csv`(date, code, name, level, sale, jeonse, wolse)를 통째로 다시 씀.
-  매번 전체 기간을 받으므로 빠진 날은 자동 복구, 별도 백필 스크립트 불필요.
+- `collect.py` — 전 지역 시계열을 받아 `data/listings.csv`(date, code, name, level, sale, jeonse, wolse)에 upsert.
+  - CSV 없음(최초): 2023-11-01부터 전체 수집.
+  - 이후 매일: 지난달 1일~오늘만 수집해 같은 (date, code)는 덮어쓰고 새 날짜는 추가.
+    한 달 여유를 두는 건 며칠 수집이 빠져도 자동 복구되게 하기 위함.
+  - 요청 수는 어느 쪽이든 지역당 1회(약 270회)로 같고, 응답 크기만 줄어듦.
 - `.github/workflows/collect.yml` — 매일 KST 07시 + 수동 실행. 변경 있으면 커밋·푸시.
 - `index.html` — CSV를 fetch해 렌더. 일/주/월 선택 → 각 지역의 기간 증감률(%) 계산.
   - 상단: 시/도 증감률 히트맵(지역 × 매매/전세/월세)
