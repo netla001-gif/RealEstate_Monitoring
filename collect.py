@@ -21,7 +21,7 @@ LIST_RE = re.compile(r"listData\[\d+\]=(\{.*?\});")
 
 
 def _int(v):
-    return int(str(v).replace(",", "") or 0)
+    return int(str(v or 0).replace(",", "") or 0)
 
 
 def parse_series(js):

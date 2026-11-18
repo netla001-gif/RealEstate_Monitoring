@@ -7,6 +7,8 @@ assert parse_series(js) == [
     {"date": "2023-11-01", "sale": 6935, "jeonse": 8040, "wolse": 6543},
     {"date": "2026-11-18", "sale": 12288, "jeonse": 4437, "wolse": 4660}]
 assert parse_series("chartData.length = 0;") == []
+assert parse_series('listData[0]={"Date":"26/11/18","VM":"1,234","VJ":5};') == [
+    {"date": "2026-11-18", "sale": 1234, "jeonse": 5, "wolse": 0}]  # 값이 빠져도 지역 전체를 버리지 않음
 
 r = parse_regions('[{"idx":"1","area":"11680","areaname":"서울 강남구","total":"12,288","value":"12,293","rate":"-0.1"}]', "sigungu")
 assert r == [{"code": "11680", "name": "서울 강남구", "level": "sigungu"}]
