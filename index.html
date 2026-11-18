@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>매물증감 대시보드</title>
+<style>
+  :root {
+    --page: #f9f9f7; --surface: #fcfcfb; --ink: #0b0b0b; --ink2: #52514e; --muted: #898781;
+    --grid: #e1e0d9; --axis: #c3c2b7; --mid: #f0efec; --up: #e34948; --down: #2a78d6;
+    --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --sel: #ecebe6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --page: #0d0d0d; --surface: #1a1a19; --ink: #f0efec; --ink2: #c3c2b7; --muted: #898781;
+      --grid: #2c2c2a; --axis: #383835; --mid: #383835; --up: #e66767; --down: #3987e5;
+      --s1: #3987e5; --s2: #d95926; --s3: #199e70; --sel: #2c2c2a;
+    }
+  }
+  :root[data-theme="dark"] {
+    --page: #0d0d0d; --surface: #1a1a19; --ink: #f0efec; --ink2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --mid: #383835; --up: #e66767; --down: #3987e5;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --sel: #2c2c2a;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--page); color: var(--ink);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; padding: 20px 16px 48px; }
+  header { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+  h1 { font-size: 22px; margin: 0; }
+  .sub { color: var(--ink2); font-size: 13px; }
+  .seg { display: inline-flex; border: 1px solid var(--axis); border-radius: 8px; overflow: hidden; }
+  .seg button { border: 0; background: var(--surface); color: var(--ink2); padding: 6px 14px; font: inherit; cursor: pointer; }
+  .seg button[aria-pressed="true"] { background: var(--ink); color: var(--page); }
+  .grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+  @media (max-width: 760px) { .grid { grid-template-columns: minmax(0, 1fr); } }
+  section { background: var(--surface); border: 1px solid var(--grid); border-radius: 10px; padding: 14px; min-width: 0; }
+  h2 { font-size: 15px; margin: 0 0 10px; }
+  .scroll { max-height: 560px; overflow: auto; }
+  table { width: 100%; border-collapse: separate; border-spacing: 0 2px; font-variant-numeric: tabular-nums; }
+  th { position: sticky; top: 0; background: var(--surface); color: var(--muted); font-weight: 500; font-size: 12px;
+    text-align: right; padding: 4px 6px; cursor: pointer; white-space: nowrap; user-select: none; }
+  th:first-child, td:first-child { text-align: left; }
+  td { padding: 5px 6px; text-align: right; white-space: nowrap; }
+  td.cell { border-left: 2px solid var(--surface); border-radius: 4px; }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover td:first-child, tbody tr.on td:first-child { background: var(--sel); border-radius: 4px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; color: var(--ink2); font-size: 12px; margin-top: 8px; }
+  .bar { width: 120px; height: 10px; border-radius: 4px;
+    background: linear-gradient(90deg, var(--down), var(--mid), var(--up)); }
+  .chartbox { position: relative; height: 340px; margin-top: 16px; }
+  #msg { color: var(--ink2); padding: 40px 0; text-align: center; }
+  #msg:empty { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>아파트 매물증감</h1>
+      <div class="sub" id="asof">데이터 불러오는 중…</div>
+    </div>
+    <div class="seg" role="group" aria-label="비교 기간">
+      <button data-days="1" aria-pressed="false">일</button>
+      <button data-days="7" aria-pressed="true">주</button>
+      <button data-days="30" aria-pressed="false">월</button>
+    </div>
+  </header>
+  <div id="msg"></div>
+  <div class="grid" id="tables" hidden>
+    <section>
+      <h2>시/도</h2>
+      <div class="scroll"><table id="sido"></table></div>
+      <div class="legend"><span>감소</span><span class="bar"></span><span>증가</span><span id="scale"></span></div>
+    </section>
+    <section>
+      <h2 id="sggTitle">구/군</h2>
+      <div class="scroll"><table id="sgg"></table></div>
+    </section>
+  </div>
+  <section id="chartSec" hidden style="margin-top:16px">
+    <h2 id="chartTitle"></h2>
+    <div class="sub">매물 수 추이 (건, 2023-11 ~)</div>
+    <div class="chartbox"><canvas id="chart" aria-label="매물 수 추이 차트"></canvas></div>
+  </section>
+</main>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script>
+const KINDS = [["sale", "매매"], ["jeonse", "전세"], ["wolse", "월세"]];
+const CLAMP = { 1: 2, 7: 5, 30: 10 };  // 색이 꽉 차는 증감률(%)
+let R = {}, latest = "", days = 7, sido = "11", region = "11", sort = { sido: null, sgg: "sale" }, chart;
+
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const shiftDate = (d, n) => new Date(Date.parse(d) - n * 864e5).toISOString().slice(0, 10);
+const shortName = r => r.level === "sigungu" ? r.name.replace(/^\S+\s/, "") : r.name;
+
+// 최신일 값 / (최신일-days 이하 가장 가까운 날짜 값) - 1. 계산 불가면 null
+function rate(r, kind, n) {
+  const last = r.dates.length - 1;
+  if (r.dates[last] !== latest) return null;
+  const target = shiftDate(latest, n);
+  let i = last;
+  while (i >= 0 && r.dates[i] > target) i--;
+  if (i < 0 || !r[kind][i]) return null;
+  return (r[kind][last] / r[kind][i] - 1) * 100;
+}
+
+function cell(r, kind) {
+  const v = rate(r, kind, days), c = CLAMP[days];
+  if (v === null) return `<td class="cell" title="데이터 없음">–</td>`;
+  const pct = Math.min(Math.abs(v) / c, 1) * 100;
+  const bg = `color-mix(in oklab, var(${v >= 0 ? "--up" : "--down"}) ${pct.toFixed(0)}%, var(--mid))`;
+  const ink = pct > 60 ? "#ffffff" : "var(--ink)";
+  const base = r[kind][r.dates.findLastIndex(d => d <= shiftDate(latest, days))];
+  const tip = `${shortName(r)} ${KINDS.find(k => k[0] === kind)[1]}: ${base.toLocaleString()} → ${r[kind].at(-1).toLocaleString()}건`;
+  return `<td class="cell" style="background:${bg};color:${ink}" title="${tip}">${Math.abs(v) < 0.05 ? "0.0" : (v > 0 ? "+" : "") + v.toFixed(1)}%</td>`;
+}
+
+function table(el, rows, key, selected) {
+  const s = sort[key];
+  if (s) rows.sort((a, b) => (rate(b, s, days) ?? -1e9) - (rate(a, s, days) ?? -1e9));
+  el.innerHTML = `<thead><tr><th data-k="">지역</th>${KINDS.map(([k, n]) =>
+      `<th data-k="${k}">${n}${s === k ? " ▼" : ""}</th>`).join("")}</tr></thead><tbody>` +
+    rows.map(r => `<tr data-code="${r.code}" class="${r.code === selected ? "on" : ""}"><td>${shortName(r)}</td>${
+      KINDS.map(([k]) => cell(r, k)).join("")}</tr>`).join("") + "</tbody>";
+}
+
+function render() {
+  const all = Object.values(R);
+  table(document.getElementById("sido"), all.filter(r => r.level === "sido"), "sido", sido);
+  table(document.getElementById("sgg"), all.filter(r => r.level === "sigungu" && r.code.startsWith(sido)), "sgg", region);
+  document.getElementById("sggTitle").textContent = `${R[sido].name} 구/군 (열 제목 클릭 시 정렬)`;
+  document.getElementById("scale").textContent = `색 최대 ±${CLAMP[days]}%`;
+  drawChart();
+}
+
+function drawChart() {
+  const r = R[region];
+  document.getElementById("chartTitle").textContent = r.name;
+  const colors = [css("--s1"), css("--s2"), css("--s3")];
+  const data = {
+    labels: r.dates,
+    datasets: KINDS.map(([k, n], i) => ({ label: n, data: r[k], borderColor: colors[i], backgroundColor: colors[i],
+      borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, tension: 0 })),
+  };
+  if (chart) chart.destroy();
+  chart = new Chart(document.getElementById("chart"), {
+    type: "line", data,
+    options: {
+      maintainAspectRatio: false, animation: false,
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: { labels: { color: css("--ink2"), boxWidth: 12, boxHeight: 2 } },
+        tooltip: { callbacks: { label: c => ` ${c.dataset.label} ${c.parsed.y.toLocaleString()}건` } },
+      },
+      scales: {
+        x: { ticks: { color: css("--muted"), maxTicksLimit: 8, maxRotation: 0 }, grid: { display: false },
+             border: { color: css("--axis") } },
+        y: { ticks: { color: css("--muted"), callback: v => v.toLocaleString() }, grid: { color: css("--grid") },
+             border: { display: false } },
+      },
+    },
+  });
+}
+
+document.querySelector(".seg").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  days = +b.dataset.days;
+  document.querySelectorAll(".seg button").forEach(x => x.setAttribute("aria-pressed", x === b));
+  render();
+});
+document.getElementById("tables").addEventListener("click", e => {
+  const th = e.target.closest("th");
+  if (th) { const key = th.closest("table").id; sort[key] = th.dataset.k || null; return render(); }
+  const tr = e.target.closest("tr[data-code]"); if (!tr) return;
+  const code = tr.dataset.code;
+  if (tr.closest("table").id === "sido") sido = code;
+  region = code;
+  render();
+});
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => R[region] && drawChart());
+
+fetch("data/listings.csv").then(r => { if (!r.ok) throw new Error(r.status); return r.text(); }).then(text => {
+  const lines = text.trim().split("\n");
+  for (let i = 1; i < lines.length; i++) {
+    const [date, code, name, level, sale, jeonse, wolse] = lines[i].split(",");
+    const r = R[code] ??= { code, name, level, dates: [], sale: [], jeonse: [], wolse: [] };
+    r.name = name;
+    r.dates.push(date); r.sale.push(+sale); r.jeonse.push(+jeonse); r.wolse.push(+wolse);
+    if (date > latest) latest = date;
+  }
+  document.getElementById("asof").textContent = `기준일 ${latest} · 출처 아실(asil.kr) · 매일 오전 7시 갱신`;
+  document.getElementById("tables").hidden = false;
+  document.getElementById("chartSec").hidden = false;
+  render();
+}).catch(e => { document.getElementById("msg").textContent = `데이터를 불러오지 못했습니다 (${e.message})`; });
+</script>
+</body>
+</html>
