@@ -103,6 +103,8 @@ def main():
         w.writerows(rows)
     os.replace(tmp, CSV_PATH)
     print(f"지역 {len(regions)}개 (실패 {failed}), 새 행 {len(new)}, 전체 {len(rows)}행")
+    if failed > len(regions) // 2:  # 받은 건 저장하되, 절반 넘게 실패하면 실행을 실패로 표시
+        sys.exit(f"지역 절반 이상 수집 실패 ({failed}/{len(regions)}), 차단 의심")
 
 
 if __name__ == "__main__":

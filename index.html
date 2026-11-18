@@ -91,8 +91,11 @@ const CLAMP = { 1: 2, 7: 5, 30: 10 };  // 색이 꽉 차는 증감률(%)
 let R = {}, latest = "", days = 7, sido = "11", region = "11", sort = { sido: null, sgg: "sale" }, chart;
 
 const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+// test_dashboard.js 가 아래 함수를 검사한다
+// <pure>
 const shiftDate = (d, n) => new Date(Date.parse(d) - n * 864e5).toISOString().slice(0, 10);
-const shortName = r => r.level === "sigungu" ? r.name.replace(/^\S+\s/, "") : r.name;
+const esc = s => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const shortName = r => esc(r.level === "sigungu" ? r.name.replace(/^\S+\s/, "") : r.name);
 
 // 최신일 값 / (최신일-days 이하 가장 가까운 날짜 값) - 1. 계산 불가면 null
 function rate(r, kind, n) {
@@ -104,6 +107,7 @@ function rate(r, kind, n) {
   if (i < 0 || !r[kind][i]) return null;
   return (r[kind][last] / r[kind][i] - 1) * 100;
 }
+// </pure>
 
 function cell(r, kind) {
   const v = rate(r, kind, days), c = CLAMP[days];
@@ -121,7 +125,7 @@ function table(el, rows, key, selected) {
   if (s) rows.sort((a, b) => (rate(b, s, days) ?? -1e9) - (rate(a, s, days) ?? -1e9));
   el.innerHTML = `<thead><tr><th data-k="">지역</th>${KINDS.map(([k, n]) =>
       `<th data-k="${k}">${n}${s === k ? " ▼" : ""}</th>`).join("")}</tr></thead><tbody>` +
-    rows.map(r => `<tr data-code="${r.code}" class="${r.code === selected ? "on" : ""}"><td>${shortName(r)}</td>${
+    rows.map(r => `<tr data-code="${esc(r.code)}" class="${r.code === selected ? "on" : ""}"><td>${shortName(r)}</td>${
       KINDS.map(([k]) => cell(r, k)).join("")}</tr>`).join("") + "</tbody>";
 }
 
