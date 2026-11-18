@@ -60,10 +60,13 @@
       <h1>아파트 매물증감</h1>
       <div class="sub" id="asof">데이터 불러오는 중…</div>
     </div>
-    <div class="seg" role="group" aria-label="비교 기간">
-      <button data-days="1" aria-pressed="false">일</button>
-      <button data-days="7" aria-pressed="true">주</button>
-      <button data-days="30" aria-pressed="false">월</button>
+    <div style="text-align:right">
+      <div class="seg" role="group" aria-label="비교 기간">
+        <button data-days="1" aria-pressed="false">일</button>
+        <button data-days="7" aria-pressed="true">주</button>
+        <button data-days="30" aria-pressed="false">월</button>
+      </div>
+      <div class="sub" id="range" aria-live="polite"></div>
     </div>
   </header>
   <div id="msg"></div>
@@ -88,7 +91,7 @@
 <script>
 const KINDS = [["sale", "매매"], ["jeonse", "전세"], ["wolse", "월세"]];
 const CLAMP = { 1: 2, 7: 5, 30: 10 };  // 색이 꽉 차는 증감률(%)
-let R = {}, latest = "", days = 7, sido = "11", region = "11", sort = { sido: null, sgg: "sale" }, chart;
+let R = {}, allDates = [], latest = "", days = 7, sido = "11", region = "11", sort = { sido: null, sgg: "sale" }, chart;
 
 const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 // test_dashboard.js 가 아래 함수를 검사한다
@@ -135,6 +138,8 @@ function render() {
   table(document.getElementById("sgg"), all.filter(r => r.level === "sigungu" && r.code.startsWith(sido)), "sgg", region);
   document.getElementById("sggTitle").textContent = `${R[sido].name} 구/군 (열 제목 클릭 시 정렬)`;
   document.getElementById("scale").textContent = `색 최대 ±${CLAMP[days]}%`;
+  const target = shiftDate(latest, days), base = allDates.findLast(d => d <= target);
+  document.getElementById("range").textContent = base ? `${base} → ${latest} 매물 수 비교` : "";
   drawChart();
 }
 
@@ -193,6 +198,7 @@ fetch("data/listings.csv").then(r => { if (!r.ok) throw new Error(r.status); ret
     r.dates.push(date); r.sale.push(+sale); r.jeonse.push(+jeonse); r.wolse.push(+wolse);
     if (date > latest) latest = date;
   }
+  allDates = [...new Set(Object.values(R).flatMap(r => r.dates))].sort();
   document.getElementById("asof").textContent = `기준일 ${latest} · 출처 아실(asil.kr) · 매일 오전 7시 갱신`;
   document.getElementById("tables").hidden = false;
   document.getElementById("chartSec").hidden = false;
